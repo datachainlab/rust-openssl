@@ -1939,8 +1939,43 @@ impl X509Crl {
         unsafe { ffi::X509_CRL_get_version(self.as_ptr()) as i32 }
     }
 
+    pub fn set_last_update(&mut self, last_update: &Asn1Time) -> Result<(), ErrorStack> {
+        cfg_if!(
+        if #[cfg(any(ossl110, libressl270, boringssl))] {
+                unsafe {
+                    cvt(ffi::X509_CRL_set1_lastUpdate(self.as_ptr(), last_update.as_ptr())).map(|_| ())?
+                };
+            } else {
+                unsafe {
+                    cvt(ffi::X509_CRL_set_lastUpdate(self.as_ptr(), last_update.as_ptr())).map(|_| ())?
+                };
+            }
+        );
+
+        Ok(())
+    }
+
+    pub fn set_next_update(&mut self, next_update: &Asn1Time) -> Result<(), ErrorStack> {
+        cfg_if!(
+        if #[cfg(any(ossl110, libressl270, boringssl))] {
+                unsafe {
+                    cvt(ffi::X509_CRL_set1_nextUpdate(self.as_ptr(), next_update.as_ptr())).map(|_| ())?
+                };
+            } else {
+                unsafe {
+                    cvt(ffi::X509_CRL_set_nextUpdate(self.as_ptr(), next_update.as_ptr())).map(|_| ())?
+                };
+            }
+        );
+
+        Ok(())
+    }
+
     /// use a negative value to set a time before 'now'
-    pub fn set_last_update(&mut self, seconds_from_now: Option<i32>) -> Result<(), ErrorStack> {
+    pub fn set_last_update_from_now(
+        &mut self,
+        seconds_from_now: Option<i32>,
+    ) -> Result<(), ErrorStack> {
         let time = Asn1Time::seconds_from_now(seconds_from_now.unwrap_or(0) as c_long)?;
         cfg_if!(
         if #[cfg(any(ossl110, libressl270, boringssl))] {
@@ -2084,7 +2119,7 @@ impl X509Crl {
             _ => { /* do nothing, already revoked */ }
         }
 
-        self.set_last_update(Some(0))
+        self.set_last_update_from_now(Some(0))
     }
 }
 

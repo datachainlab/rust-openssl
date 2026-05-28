@@ -39,8 +39,6 @@
 //! decrypted.truncate(decrypted_len);
 //! assert_eq!(&*decrypted, data);
 //! ```
-#[cfg(any(ossl102, libressl))]
-use libc::c_int;
 use std::{marker::PhantomData, ptr};
 
 use crate::error::ErrorStack;
@@ -151,7 +149,6 @@ impl<'a> Encrypter<'a> {
     ///
     /// This is only useful for RSA keys.
     #[corresponds(EVP_PKEY_CTX_set0_rsa_oaep_label)]
-    #[cfg(any(ossl102, libressl))]
     pub fn set_rsa_oaep_label(&mut self, label: &[u8]) -> Result<(), ErrorStack> {
         unsafe {
             let p = cvt_p(ffi::OPENSSL_malloc(label.len() as _))?;
@@ -159,13 +156,12 @@ impl<'a> Encrypter<'a> {
 
             cvt(ffi::EVP_PKEY_CTX_set0_rsa_oaep_label(
                 self.pctx,
-                p,
-                label.len() as c_int,
+                p.cast(),
+                label.len() as _,
             ))
             .map(|_| ())
-            .map_err(|e| {
+            .inspect_err(|_| {
                 ffi::OPENSSL_free(p);
-                e
             })
         }
     }
@@ -336,7 +332,6 @@ impl<'a> Decrypter<'a> {
     ///
     /// This is only useful for RSA keys.
     #[corresponds(EVP_PKEY_CTX_set0_rsa_oaep_label)]
-    #[cfg(any(ossl102, libressl))]
     pub fn set_rsa_oaep_label(&mut self, label: &[u8]) -> Result<(), ErrorStack> {
         unsafe {
             let p = cvt_p(ffi::OPENSSL_malloc(label.len() as _))?;
@@ -344,13 +339,12 @@ impl<'a> Decrypter<'a> {
 
             cvt(ffi::EVP_PKEY_CTX_set0_rsa_oaep_label(
                 self.pctx,
-                p,
-                label.len() as c_int,
+                p.cast(),
+                label.len() as _,
             ))
             .map(|_| ())
-            .map_err(|e| {
+            .inspect_err(|_| {
                 ffi::OPENSSL_free(p);
-                e
             })
         }
     }
@@ -505,7 +499,6 @@ mod test {
     }
 
     #[test]
-    #[cfg(any(ossl102, libressl))]
     fn rsa_encrypt_decrypt_oaep_label() {
         let key = include_bytes!("../test/rsa.pem");
         let private_key = Rsa::private_key_from_pem(key).unwrap();

@@ -24,7 +24,6 @@
 //! use openssl::asn1::Asn1Time;
 //! let tomorrow = Asn1Time::days_from_now(1);
 //! ```
-use cfg_if::cfg_if;
 use foreign_types::{ForeignType, ForeignTypeRef};
 use libc::{c_char, c_int, c_long, time_t};
 use std::cmp::Ordering;
@@ -80,6 +79,29 @@ impl fmt::Display for Asn1GeneralizedTimeRef {
                 Err(_) => f.write_str("error"),
                 Ok(_) => f.write_str(str::from_utf8_unchecked(mem_bio.get_buf())),
             }
+        }
+    }
+}
+
+impl Asn1GeneralizedTime {
+    /// Creates a new generalized time corresponding to the specified ASN1 time
+    /// string.
+    #[corresponds(ASN1_GENERALIZEDTIME_set_string)]
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Result<Asn1GeneralizedTime, ErrorStack> {
+        unsafe {
+            ffi::init();
+
+            let time_str = CString::new(s).unwrap();
+            let ptr = cvt_p(ffi::ASN1_GENERALIZEDTIME_new())?;
+            let time = Asn1GeneralizedTime::from_ptr(ptr);
+
+            cvt(ffi::ASN1_GENERALIZEDTIME_set_string(
+                time.as_ptr(),
+                time_str.as_ptr(),
+            ))?;
+
+            Ok(time)
         }
     }
 }
@@ -352,9 +374,9 @@ impl Asn1Time {
 
     /// Creates a new time corresponding to the specified X509 time string.
     ///
-    /// Requires BoringSSL or OpenSSL 1.1.1 or newer.
+    /// Requires BoringSSL, AWS-LC, OpenSSL 1.1.1, LibreSSL 3.6.0, or newer.
     #[corresponds(ASN1_TIME_set_string_X509)]
-    #[cfg(any(ossl111, boringssl, awslc))]
+    #[cfg(any(ossl111, boringssl, libressl360, awslc))]
     pub fn from_str_x509(s: &str) -> Result<Asn1Time, ErrorStack> {
         unsafe {
             let s = CString::new(s).unwrap();
@@ -711,15 +733,30 @@ impl fmt::Display for Asn1ObjectRef {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         unsafe {
             let mut buf = [0; 80];
-            let len = ffi::OBJ_obj2txt(
+            let mut clamped = false;
+            let mut len = ffi::OBJ_obj2txt(
                 buf.as_mut_ptr() as *mut _,
                 buf.len() as c_int,
                 self.as_ptr(),
                 0,
             );
+            if len <= 0 {
+                return fmt.write_str("OBJ_obj2txt error");
+            }
+            if len > buf.len() as i32 {
+                // omit trailing NUL
+                len = (buf.len() - 1) as i32;
+                clamped = true;
+            }
             match str::from_utf8(&buf[..len as usize]) {
                 Err(_) => fmt.write_str("error"),
-                Ok(s) => fmt.write_str(s),
+                Ok(s) => {
+                    if clamped {
+                        fmt.write_str(&(s.to_owned() + "..."))
+                    } else {
+                        fmt.write_str(s)
+                    }
+                }
             }
         }
     }
@@ -731,16 +768,7 @@ impl fmt::Debug for Asn1ObjectRef {
     }
 }
 
-cfg_if! {
-    if #[cfg(any(ossl110, libressl, boringssl, awslc))] {
-        use ffi::ASN1_STRING_get0_data;
-    } else {
-        #[allow(bad_style)]
-        unsafe fn ASN1_STRING_get0_data(s: *mut ffi::ASN1_STRING) -> *const ::libc::c_uchar {
-            ffi::ASN1_STRING_data(s)
-        }
-    }
-}
+use ffi::ASN1_STRING_get0_data;
 
 foreign_type_and_impl_send_sync! {
     type CType = ffi::ASN1_ENUMERATED;
@@ -792,8 +820,14 @@ mod tests {
     #[test]
     fn time_from_str() {
         Asn1Time::from_str("99991231235959Z").unwrap();
-        #[cfg(ossl111)]
+        #[cfg(any(ossl111, boringssl, libressl360, awslc))]
         Asn1Time::from_str_x509("99991231235959Z").unwrap();
+    }
+
+    #[test]
+    fn generalized_time_from_str() {
+        let time = Asn1GeneralizedTime::from_str("99991231235959Z").unwrap();
+        assert_eq!("Dec 31 23:59:59 9999 GMT", time.to_string());
     }
 
     #[test]
@@ -882,6 +916,13 @@ mod tests {
         Asn1Object::from_str("NOT AN OID")
             .map(|object| object.to_string())
             .expect_err("parsing invalid OID should fail");
+    }
+
+    #[test]
+    fn very_long_object() {
+        let fifty_ones = "1.".repeat(49) + "1";
+        let object = Asn1Object::from_str(&fifty_ones).unwrap();
+        assert_eq!(object.as_ref().to_string(), "1.".repeat(40) + "..");
     }
 
     #[test]
